@@ -5,8 +5,17 @@
  * @license MIT
  */
 
-require_once __DIR__ . "/vendor/autoload.php";
+$loader = require_once __DIR__ . "/vendor/autoload.php";
+$loader->addPsr4("SpeedrunComRunSubmitter\\", __DIR__ . "/src");
 
+use GuzzleHttp\Client;
+use SpeedrunComRunSubmitter\Cache;
+use SpeedrunComRunSubmitter\EntityFetcher\Category;
+use SpeedrunComRunSubmitter\EntityFetcher\Game;
+use SpeedrunComRunSubmitter\EntityFetcher\Level;
+use SpeedrunComRunSubmitter\EntityFetcher\Platform;
+use SpeedrunComRunSubmitter\EntityFetcher\Variable;
+use Symfony\Component\Cache\Adapter\FilesystemAdapter;
 
 // Config
 $apiKey = "<your API key>";
@@ -46,98 +55,40 @@ $runInfo = (object)[
 
 
 // Initialize required objects
-$client = new \GuzzleHttp\Client();
+$cacheDirectory = __DIR__  . "/cache";
+$cache = new Cache(
+    new FilesystemAdapter("speedrun_com_entities", 0, $cacheDirectory)
+);
+$client = new Client();
 
+$game = new Game($cache, $client);
+$level = new Level($cache, $client);
+$category = new Category($cache, $client);
+$variableFetcher = new Variable($cache, $client);
+$platform = new Platform($cache, $client);
 
 // Fetch game
-$response = $client->request('GET', 'https://www.speedrun.com/api/v1/games', [ "query" => [ "abbreviation" => $gameName ]]);
-
-$json = json_decode($response->getBody());
-$targetGame = null;
-foreach ($json->data as $game)
-{
-    if ($game->abbreviation === $gameName)
-    {
-        $targetGame = $game;
-        break;
-    }
-}
-
+$targetGame = $game->getGameByAbbreviation($gameName);
 if ($targetGame)
 {
-    echo "Game ID: " . $game->id . PHP_EOL;
-
+    echo "Game ID: " . $targetGame->id . PHP_EOL;
 
     // Fetch level
-    $levelsUrl = "https://www.speedrun.com/api/v1/games/" . $targetGame->id . "/levels";
-    $response = $client->request('GET', $levelsUrl);
-
-    $json = json_decode($response->getBody());
-
-    $targetLevel = null;
-    foreach ($json->data as $level)
-    {
-        if ($level->name === $runInfo->level)
-        {
-            $targetLevel = $level;
-            break;
-        }
-    }
-
+    $targetLevel = $level->getLevelByName($targetGame->id, $runInfo->level);
     if ($targetLevel)
     {
         echo "Level ID: " . $targetLevel->id . PHP_EOL;
 
-
         // Fetch category
-        $categoriesUrl = "https://www.speedrun.com/api/v1/levels/" . $targetLevel->id . "/categories";
-        $response = $client->request('GET', $categoriesUrl);
-        $json = json_decode($response->getBody());
-
-        $targetCategory = null;
-        foreach ($json->data as $category)
-        {
-            if ($category->name === $runInfo->category)
-            {
-                $targetCategory = $category;
-                break;
-            }
-        }
-
+        $targetCategory = $category->getCategoryByName($targetLevel->id, $runInfo->category);
         if ($targetCategory)
         {
             echo "Category ID: " . $targetCategory->id . PHP_EOL;
         }
 
-
-        // Fetch variables
-        $variablesUrl = "https://www.speedrun.com/api/v1/levels/" . $targetLevel->id . "/variables";
-        $response = $client->request('GET', $variablesUrl);
-        $json = json_decode($response->getBody());
-
-        $variablesMap = [];
-        foreach ($json->data as $variable)
-        {
-            $variablesMap[$variable->name] = $variable;
-        }
-
-        echo json_encode($json, JSON_PRETTY_PRINT);
-        echo PHP_EOL;
-
-
         // Fetch platform
-        $platformMap = [];
-        foreach ($targetGame->platforms as $platformId)
-        {
-            $variablesUrl = "https://www.speedrun.com/api/v1/platforms/" . $platformId;
-            $response = $client->request('GET', $variablesUrl);
-            $json = json_decode($response->getBody());
-            $platform = $json->data;
-            $platformMap[$platform->name] = $platform;
-        }
-
-        $targetPlatform = $platformMap[$runInfo->platform] ?? null;
-        if ($targetPlatform === null) exit("Could not find platform");
+        $targetPlatform = $platform->getPlatformByName($targetGame, $runInfo->platform);
+        if (!$targetPlatform) exit("Could not find platform");
 
 
         // Build run
@@ -149,7 +100,7 @@ if ($targetGame)
         {
             if ($variableData->type === "pre-defined")
             {
-                $variable = $variablesMap[$variableName] ?? null;
+                $variable = $variableFetcher->getVariableByName($targetLevel->id, $variableName);
                 if ($variable)
                 {
                     $valueMap = [];
