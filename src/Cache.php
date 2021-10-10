@@ -1,4 +1,9 @@
 <?php
+/**
+ * @author wesen
+ * @copyright 2021 wesen <wesen-ac@web.de>
+ * @license MIT
+ */
 
 namespace SpeedrunComRunSubmitter;
 
